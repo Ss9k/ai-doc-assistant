@@ -4,8 +4,11 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.162.0",
+    "psycopg[binary]>=3.3.6",
     "pypdf>=6.21.3",
+    "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
+    "sqlmodel>=0.0.48",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -13,7 +16,10 @@ dependencies = [
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
+    "ruff>=0.17.3",
 ]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+[tool.ruff.lint]
+ignore = ["B008"]

@@ -1,0 +1,34 @@
+name: CI
+
+on:                         # on defines the events that trigger the workflow.
+  push:                     # This means whenever someone pushes code to a matching branch, GitHub executes the workflow.
+    branches: ["**"]        # branches specifies which branches should trigger the workflow.
+                            # ** is a wildcard pattern that matches branch names at any depth.
+  pull_request:             # This means GitHub executes the workflow when a Pull Request targeting a matching branch is opened or updated.
+    branches: ["**"]
+
+jobs:                       # A job is a collection of steps that GitHub executes on a runner.
+  checks:                   # checks is the unique ID of our job.
+    name: Code Quality and Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Run Pytest
+        env:
+            DATABASE_URL: "sqlite://"
+        run: uv run pytest

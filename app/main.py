@@ -1,20 +1,25 @@
 
-from datetime import datetime, timezone
-from pathlib import Path
-from uuid import uuid4
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from app.models import DocumentResponse
+from sqlmodel import Session, select
+
+from app.database import create_db_and_tables, get_session
+from app.models import Document, DocumentResponse
 
 app = FastAPI(title="AI Document Assistant")
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
 
-# In-memory storage; data disappears when the server restarts.
-documents: list[DocumentResponse] = []
+
+@app.on_event("startup")
+def on_startup():
+    create_db_and_tables()
 
 
 @app.get("/health")
@@ -27,7 +32,10 @@ def health_check():
     response_model=DocumentResponse,
     status_code=201,
 )
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
     filename = file.filename or ""
     extension = Path(filename).suffix.lower()
 
@@ -70,17 +78,21 @@ async def upload_document(file: UploadFile = File(...)):
                 detail="The uploaded PDF contains no extractable text.",
             )
 
-    document = DocumentResponse(
-        id=str(uuid4()),
+    document = Document(
         filename=filename,
+        content_type=file.content_type or "application/octet-stream",
         size_bytes=len(content),
-        uploaded_at=datetime.now(timezone.utc),
+        uploaded_at=datetime.now(UTC),
     )
 
-    documents.append(document)
+    session.add(document)
+    session.commit()
+    session.refresh(document)
+
     return document
 
 
 @app.get("/documents", response_model=list[DocumentResponse])
-def list_documents():
-    return documents
+def list_documents(session: Session = Depends(get_session)):
+    statement = select(Document).order_by(Document.uploaded_at.desc())
+    return session.exec(statement).all()
