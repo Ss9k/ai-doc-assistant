@@ -29,4 +29,6 @@ jobs:                       # A job is a collection of steps that GitHub execute
         run: uv run ruff check .
 
       - name: Run Pytest
+        env:
+            DATABASE_URL: "sqlite://"
         run: uv run pytest
