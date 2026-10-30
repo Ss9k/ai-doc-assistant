@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from pydantic import BaseModel
-from sqlmodel import SQLModel, Field
+from sqlmodel import Field, SQLModel
 
 
 class Document(SQLModel, table=True):

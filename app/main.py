@@ -1,5 +1,5 @@
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -82,7 +82,7 @@ async def upload_document(
         filename=filename,
         content_type=file.content_type or "application/octet-stream",
         size_bytes=len(content),
-        uploaded_at=datetime.now(timezone.utc),
+        uploaded_at=datetime.now(UTC),
     )
 
     session.add(document)
