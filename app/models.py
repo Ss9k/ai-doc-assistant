@@ -13,7 +13,9 @@ class Document(SQLModel, table=True):
     filename: str
     content_type: str
     size_bytes: int
-    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC),)
+    uploaded_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+    )
 
 
 class DocumentResponse(BaseModel):

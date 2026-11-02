@@ -1,4 +1,3 @@
-
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -62,10 +61,7 @@ async def upload_document(
     if extension == ".pdf":
         try:
             pdf = PdfReader(BytesIO(content))
-            has_text = any(
-                (page.extract_text() or "").strip()
-                for page in pdf.pages
-            )
+            has_text = any((page.extract_text() or "").strip() for page in pdf.pages)
         except (PdfReadError, EOFError):
             raise HTTPException(
                 status_code=400,
