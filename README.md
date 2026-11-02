@@ -42,11 +42,11 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-The API will be available at `http://127.0.0.1:8000`.
+The API will be available at `http://127.0.0.1:8001`.
 
 ## API Documentation
 
-Open `http://127.0.0.1:8000/docs` in your browser to explore and test the API using Swagger UI.
+Open `http://127.0.0.1:8001/docs` in your browser to explore and test the API using Swagger UI.
 
 ## Endpoints
 
