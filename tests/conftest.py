@@ -1,12 +1,10 @@
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 from app import database
 from app.main import app
-
 
 test_engine = create_engine(
     "sqlite://",
@@ -26,13 +24,11 @@ def client(monkeypatch):
         with Session(test_engine) as session:
             yield session
 
-    app.dependency_overrides[database.get_session] = (
-        override_get_session
-    )
+    app.dependency_overrides[database.get_session] = override_get_session
 
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(database.get_session, None)
         SQLModel.metadata.drop_all(test_engine)

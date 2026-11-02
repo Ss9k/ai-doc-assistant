@@ -1,9 +1,8 @@
-
 import os
 
 from dotenv import load_dotenv
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 load_dotenv()
 
