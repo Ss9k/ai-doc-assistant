@@ -74,14 +74,14 @@ async def upload_document(
                 detail="The uploaded PDF contains no extractable text.",
             )
     existing_document = session.exec(
-                select(Document).where(Document.filename == filename)
-            ).first()
+        select(Document).where(Document.filename == filename)
+    ).first()
 
     if existing_document:
-            raise HTTPException(
-                status_code=409,
-                detail="A document with this filename already exists.",
-            )
+        raise HTTPException(
+            status_code=409,
+            detail="A document with this filename already exists.",
+        )
 
     document = Document(
         filename=filename,
