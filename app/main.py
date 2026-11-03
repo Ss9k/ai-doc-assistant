@@ -46,10 +46,10 @@ async def upload_document(
 
     content = await file.read()
 
-    if not content:
+    if not content or not content.strip():
         raise HTTPException(
             status_code=400,
-            detail="The uploaded file is empty.",
+            detail="The uploaded file is empty or contains only whitespace.",
         )
 
     if len(content) > MAX_FILE_SIZE:
@@ -72,6 +72,15 @@ async def upload_document(
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded PDF contains no extractable text.",
+            )
+    existing_document = session.exec(
+                select(Document).where(Document.filename == filename)
+            ).first()
+
+    if existing_document:
+            raise HTTPException(
+                status_code=409,
+                detail="A document with this filename already exists.",
             )
 
     document = Document(

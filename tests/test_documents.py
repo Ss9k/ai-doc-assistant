@@ -39,7 +39,7 @@ def test_upload_empty_document(client):
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "The uploaded file is empty."
+    assert response.json()["detail"] == ("The uploaded file is empty or contains only whitespace.")
 
 
 def test_upload_unsupported_file_type(client):
@@ -109,3 +109,23 @@ def test_upload_blank_pdf(client):
     assert response.json()["detail"] == (
         "The uploaded PDF contains no extractable text."
     )
+
+def test_upload_whitespace_only_document(client):
+    response = client.post(
+        "/documents",
+        files={
+            "file": (
+                "blank.txt",
+                b"   \n\t  ",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "The uploaded file is empty or contains only whitespace."
+    )
+
+    documents = client.get("/documents")
+    assert len(documents.json()) == 0
