@@ -1,24 +1,31 @@
+
+import asyncio
+import logging
+import time
+
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, select
 
-from app.database import create_db_and_tables, get_session
-from app.models import Document, DocumentResponse
+from app import database
+from app.database import get_session
+from app.llm import generate, GEMINI_MODEL, OLLAMA_MODEL
+from app.models import Document, DocumentResponse, LLMCall
+from app.pricing import calculate_cost
+
 
 app = FastAPI(title="AI Document Assistant")
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
-
-
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
 
 
 @app.get("/health")
@@ -101,3 +108,126 @@ async def upload_document(
 def list_documents(session: Session = Depends(get_session)):
     statement = select(Document).order_by(Document.uploaded_at.desc())
     return session.exec(statement).all()
+
+
+logger = logging.getLogger(__name__)
+
+
+class AskRequest(BaseModel):
+    question: str
+    provider: str = "gemini"
+
+
+
+@app.post("/ask")
+async def ask(request: AskRequest):
+    question = request.question.strip()
+    provider = request.provider.lower().strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty.",
+        )
+
+    if provider not in {"gemini", "ollama"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported provider: {provider}",
+        )
+
+    started_at = time.perf_counter()
+
+    usage = {
+        "model": GEMINI_MODEL if provider == "gemini" else OLLAMA_MODEL,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+
+    logged = False
+
+    def capture_usage(data):
+        usage.update(data)
+
+    def save_call():
+        nonlocal logged
+
+        if logged:
+            return
+
+        logged = True
+
+        try:
+            latency_ms = int(
+                (time.perf_counter() - started_at) * 1000
+            )
+
+            cost = calculate_cost(
+                provider=provider,
+                model=usage["model"],
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+            )
+
+            call = LLMCall(
+                provider=provider,
+                model=usage["model"],
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                latency_ms=latency_ms,
+                cost_usd=cost,
+            )
+
+            with Session(database.engine) as session:
+                session.add(call)
+                session.commit()
+
+        except Exception:
+            logger.exception("Failed to save LLM call")
+
+    iterator = generate(
+        question,
+        provider,
+        on_usage=capture_usage,
+    )
+
+    try:
+        first_chunk = await anext(iterator)
+
+    except StopAsyncIteration:
+        first_chunk = None
+
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        save_call()
+        raise HTTPException(
+            status_code=504,
+            detail="LLM request timed out after retries.",
+        ) from exc
+
+    except Exception as exc:
+        logger.exception("LLM generation failed")
+        save_call()
+        raise HTTPException(
+            status_code=503,
+            detail="LLM provider is currently unavailable.",
+        ) from exc
+
+    async def response_stream() -> AsyncIterator[str]:
+        try:
+            if first_chunk is not None:
+                yield first_chunk
+
+            async for chunk in iterator:
+                yield chunk
+
+        except Exception:
+            logger.exception("LLM stream interrupted")
+            raise
+
+        finally:
+            save_call()
+
+    return StreamingResponse(
+        response_stream(),
+        media_type="text/plain",
+    )
