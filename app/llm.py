@@ -143,33 +143,33 @@ async def generate_with_ollama(
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": True,
+        "think": False
     }
 
     timeout = httpx.Timeout(REQUEST_TIMEOUT)
 
-    async with asyncio.timeout(REQUEST_TIMEOUT):
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST", url, json=payload
-            ) as response:
-                response.raise_for_status()
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            "POST", url, json=payload
+        ) as response:
+            response.raise_for_status()
 
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
 
-                    data = json.loads(line)
+                data = json.loads(line)
 
-                    if data.get("response"):
-                        yield data["response"]
+                if data.get("response"):
+                    yield data["response"]
 
-                    if data.get("done") and on_usage:
-                        on_usage({
-                            "model": data.get("model", OLLAMA_MODEL),
-                            "input_tokens": data.get(
-                                "prompt_eval_count", 0
-                            ),
-                            "output_tokens": data.get(
-                                "eval_count", 0
-                            ),
-                        })
+                if data.get("done") and on_usage:
+                    on_usage({
+                        "model": data.get("model", OLLAMA_MODEL),
+                        "input_tokens": data.get(
+                            "prompt_eval_count", 0
+                        ),
+                        "output_tokens": data.get(
+                            "eval_count", 0
+                        ),
+                    })
