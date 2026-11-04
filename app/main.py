@@ -7,18 +7,13 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, select
 
-from app.database import create_db_and_tables, get_session
+from app.database import get_session
 from app.models import Document, DocumentResponse
 
 app = FastAPI(title="AI Document Assistant")
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
-
-
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
 
 
 @app.get("/health")
