@@ -41,7 +41,7 @@ def calculate_cost(
     provider_key = provider.lower().strip()
 
     # Fallback default pricing if model is not found
-    default_rates = {"input": Decimal(0), "output": Decimal(0)}
+    default_rates = {"input": Decimal("0"), "output": Decimal("0")}
 
     rates = PRICING.get(provider_key, {}).get(model, default_rates)
 

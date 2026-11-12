@@ -26,7 +26,7 @@ UsageCallback = Callable[[dict[str, int | str]], None]
 def should_retry(exc: Exception) -> bool:
     if isinstance(
         exc,
-        (TimeoutError, asyncio.TimeoutError, httpx.TimeoutException),
+        (TimeoutError, httpx.TimeoutException),
     ):
         return True
 
@@ -97,17 +97,16 @@ async def generate_with_gemini(
         ),
     )
 
-    async with asyncio.timeout(REQUEST_TIMEOUT):
-        stream = await client.aio.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
+    stream = await client.aio.models.generate_content_stream(
+        model=GEMINI_MODEL,
+        contents=prompt,
+    )
 
-        async for chunk in stream:
-            if chunk.text:
-                yield chunk.text
+    async for chunk in stream:
+        if chunk.text:
+            yield chunk.text
 
-            metadata = getattr(chunk, "usage_metadata", None)
+        metadata = getattr(chunk, "usage_metadata", None)
 
             if metadata and on_usage:
                 on_usage(

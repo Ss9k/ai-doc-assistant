@@ -88,8 +88,14 @@ def test_ask_rejects_unsupported_provider(client):
         },
     )
 
-    assert response.status_code == 400
-    assert "Unsupported provider" in response.json()["detail"]
+    assert response.status_code == 422
+
+    detail = response.json()["detail"]
+
+    assert any(
+        error["loc"] == ["body", "provider"] and error["type"] == "literal_error"
+        for error in detail
+    )
 
 
 def test_ask_returns_503_when_llm_fails(client, monkeypatch):

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -11,6 +12,8 @@ from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, select
+from typing import Literal
+from starlette.concurrency import run_in_threadpool
 
 from app import database
 from app.database import get_session
@@ -121,7 +124,7 @@ logger = logging.getLogger(__name__)
 
 class AskRequest(BaseModel):
     question: str
-    provider: str = "gemini"
+    provider: Literal["gemini", "ollama"] = "gemini"
 
 
 @app.post("/ask")
@@ -133,12 +136,6 @@ async def ask(request: AskRequest):
         raise HTTPException(
             status_code=400,
             detail="Question cannot be empty.",
-        )
-
-    if provider not in {"gemini", "ollama"}:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported provider: {provider}",
         )
 
     started_at = time.perf_counter()
@@ -200,8 +197,8 @@ async def ask(request: AskRequest):
     except StopAsyncIteration:
         first_chunk = None
 
-    except TimeoutError as exc:
-        save_call()
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        await run_in_threadpool(save_call)
         raise HTTPException(
             status_code=504,
             detail="LLM request timed out after retries.",
@@ -209,7 +206,7 @@ async def ask(request: AskRequest):
 
     except Exception as exc:
         logger.exception("LLM generation failed")
-        save_call()
+        await run_in_threadpool(save_call)
         raise HTTPException(
             status_code=503,
             detail="LLM provider is currently unavailable.",
@@ -228,7 +225,7 @@ async def ask(request: AskRequest):
             raise
 
         finally:
-            save_call()
+            await run_in_threadpool(save_call)
 
     return StreamingResponse(
         response_stream(),
