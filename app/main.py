@@ -18,8 +18,13 @@ from starlette.concurrency import run_in_threadpool
 
 from app import database
 from app.database import get_session
-from app.llm import (generate,  extract_resume, GEMINI_MODEL, OLLAMA_MODEL,)
-from app.models import (Document, DocumentResponse, LLMCall, ResumeData)
+from app.llm import (
+    generate,
+    extract_resume,
+    GEMINI_MODEL,
+    OLLAMA_MODEL,
+)
+from app.models import Document, DocumentResponse, LLMCall, ResumeData
 from app.pricing import calculate_cost
 
 
@@ -118,6 +123,7 @@ class AskRequest(BaseModel):
     question: str
     provider: Literal["gemini", "ollama"] = "gemini"
 
+
 class ExtractRequest(BaseModel):
     resume_text: str
 
@@ -155,9 +161,7 @@ async def ask(request: AskRequest):
         logged = True
 
         try:
-            latency_ms = int(
-                (time.perf_counter() - started_at) * 1000
-            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
 
             cost = calculate_cost(
                 provider=provider,

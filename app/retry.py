@@ -1,4 +1,3 @@
-
 import asyncio
 import functools
 import inspect
@@ -46,8 +45,7 @@ def retry(
                             raise
 
                         logger.warning(
-                            "%s failed on attempt %s/%s: %s. "
-                            "Retrying in %.1f seconds.",
+                            "%s failed on attempt %s/%s: %s. Retrying in %.1f seconds.",
                             func.__name__,
                             attempt,
                             max_attempts,
@@ -76,8 +74,7 @@ def retry(
                         raise
 
                     logger.warning(
-                        "%s failed on attempt %s/%s: %s. "
-                        "Retrying in %.1f seconds.",
+                        "%s failed on attempt %s/%s: %s. Retrying in %.1f seconds.",
                         func.__name__,
                         attempt,
                         max_attempts,
