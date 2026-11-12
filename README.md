@@ -71,3 +71,18 @@ uv run pytest -v
 ## Storage
 
 Document metadata is stored in memory. Uploaded metadata is cleared when the application restarts. This version does not persist uploaded file contents or use a database.
+
+## Resume Extraction Evaluation
+
+- Resumes evaluated: 20
+- Valid API responses: 20/20
+- Correct fields: 80/80
+- Field accuracy: 100% on the evaluation dataset
+- Prompt-injection test: Passed
+
+### Prompt Caching
+
+Prompt caching reuses previously processed prompt prefixes across repeated API requests.
+It can reduce latency and input-token costs when system instructions and examples remain unchanged.
+Cache writes have an additional cost, while cache reads are cheaper than regular input tokens.
+It is particularly useful for applications that repeatedly send large, consistent prompts.

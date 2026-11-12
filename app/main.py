@@ -1,8 +1,5 @@
-
-import asyncio
 import logging
 import time
-
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
@@ -10,19 +7,28 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, select
 
 from app import database
 from app.database import get_session
-from app.llm import generate, GEMINI_MODEL, OLLAMA_MODEL
-from app.models import Document, DocumentResponse, LLMCall
+from app.llm import (
+    GEMINI_MODEL,
+    OLLAMA_MODEL,
+    extract_resume,
+    generate,
+)
+from app.models import Document, DocumentResponse, LLMCall, ResumeData
 from app.pricing import calculate_cost
 
-
 app = FastAPI(title="AI Document Assistant")
+
+
+class ResumeExtractRequest(BaseModel):
+    resume_text: str
+
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
@@ -118,7 +124,6 @@ class AskRequest(BaseModel):
     provider: str = "gemini"
 
 
-
 @app.post("/ask")
 async def ask(request: AskRequest):
     question = request.question.strip()
@@ -158,9 +163,7 @@ async def ask(request: AskRequest):
         logged = True
 
         try:
-            latency_ms = int(
-                (time.perf_counter() - started_at) * 1000
-            )
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
 
             cost = calculate_cost(
                 provider=provider,
@@ -197,7 +200,7 @@ async def ask(request: AskRequest):
     except StopAsyncIteration:
         first_chunk = None
 
-    except (TimeoutError, asyncio.TimeoutError) as exc:
+    except TimeoutError as exc:
         save_call()
         raise HTTPException(
             status_code=504,
@@ -231,3 +234,40 @@ async def ask(request: AskRequest):
         response_stream(),
         media_type="text/plain",
     )
+
+
+@app.post("/extract", response_model=ResumeData)
+async def extract_resume_endpoint(request: ResumeExtractRequest):
+    if not request.resume_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Resume text cannot be empty.",
+        )
+
+    try:
+        return await extract_resume(request.resume_text)
+
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract valid resume data after two attempts.",
+        ) from exc
+
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Resume extraction timed out.",
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Resume extraction service is not configured correctly.",
+        ) from exc
+
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Resume extraction failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Resume extraction service is currently unavailable.",
+        ) from exc

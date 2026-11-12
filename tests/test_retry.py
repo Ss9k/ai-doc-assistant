@@ -2,9 +2,11 @@ import pytest
 
 from app.retry import retry
 
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
 
 @pytest.mark.anyio
 async def test_retry_succeeds_after_failure(monkeypatch):
@@ -71,6 +73,7 @@ async def test_non_retryable_exception_is_not_retried(monkeypatch):
         await failing_function()
 
     assert attempts == 1
+
 
 @pytest.mark.anyio
 async def test_async_generator_retries_before_first_chunk():

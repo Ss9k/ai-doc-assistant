@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, pool
 from sqlmodel import SQLModel
 
-from app import models
-
 load_dotenv()
 
 config = context.config
