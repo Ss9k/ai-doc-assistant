@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import time
@@ -10,15 +9,17 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, select
+from typing import Literal
+from starlette.concurrency import run_in_threadpool
 
 from app import database
 from app.database import get_session
-from app.llm import generate, GEMINI_MODEL, OLLAMA_MODEL
-from app.models import Document, DocumentResponse, LLMCall
+from app.llm import (generate,  extract_resume, GEMINI_MODEL, OLLAMA_MODEL,)
+from app.models import (Document, DocumentResponse, LLMCall, ResumeData)
 from app.pricing import calculate_cost
 
 
@@ -115,8 +116,10 @@ logger = logging.getLogger(__name__)
 
 class AskRequest(BaseModel):
     question: str
-    provider: str = "gemini"
+    provider: Literal["gemini", "ollama"] = "gemini"
 
+class ExtractRequest(BaseModel):
+    resume_text: str
 
 
 @app.post("/ask")
@@ -128,12 +131,6 @@ async def ask(request: AskRequest):
         raise HTTPException(
             status_code=400,
             detail="Question cannot be empty.",
-        )
-
-    if provider not in {"gemini", "ollama"}:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported provider: {provider}",
         )
 
     started_at = time.perf_counter()
@@ -198,7 +195,7 @@ async def ask(request: AskRequest):
         first_chunk = None
 
     except (TimeoutError, asyncio.TimeoutError) as exc:
-        save_call()
+        await run_in_threadpool(save_call)
         raise HTTPException(
             status_code=504,
             detail="LLM request timed out after retries.",
@@ -206,7 +203,7 @@ async def ask(request: AskRequest):
 
     except Exception as exc:
         logger.exception("LLM generation failed")
-        save_call()
+        await run_in_threadpool(save_call)
         raise HTTPException(
             status_code=503,
             detail="LLM provider is currently unavailable.",
@@ -225,9 +222,42 @@ async def ask(request: AskRequest):
             raise
 
         finally:
-            save_call()
+            await run_in_threadpool(save_call)
 
     return StreamingResponse(
         response_stream(),
         media_type="text/plain",
     )
+
+
+@app.post("/extract", response_model=ResumeData)
+async def extract(request: ExtractRequest):
+    resume_text = request.resume_text.strip()
+
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Resume text cannot be empty.",
+        )
+
+    try:
+        return await extract_resume(resume_text)
+
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Resume extraction timed out.",
+        ) from exc
+
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Resume extraction failed after validation retry.",
+        ) from exc
+
+    except Exception as exc:
+        logger.exception("Resume extraction failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Resume extraction provider is unavailable.",
+        ) from exc
