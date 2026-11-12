@@ -1,14 +1,27 @@
+import asyncio
+import logging
+import time
+
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, select
+from typing import Literal
+from starlette.concurrency import run_in_threadpool
 
+from app import database
 from app.database import get_session
-from app.models import Document, DocumentResponse
+from app.llm import (generate,  extract_resume, GEMINI_MODEL, OLLAMA_MODEL,)
+from app.models import (Document, DocumentResponse, LLMCall, ResumeData)
+from app.pricing import calculate_cost
+
 
 app = FastAPI(title="AI Document Assistant")
 
@@ -96,3 +109,155 @@ async def upload_document(
 def list_documents(session: Session = Depends(get_session)):
     statement = select(Document).order_by(Document.uploaded_at.desc())
     return session.exec(statement).all()
+
+
+logger = logging.getLogger(__name__)
+
+
+class AskRequest(BaseModel):
+    question: str
+    provider: Literal["gemini", "ollama"] = "gemini"
+
+class ExtractRequest(BaseModel):
+    resume_text: str
+
+
+@app.post("/ask")
+async def ask(request: AskRequest):
+    question = request.question.strip()
+    provider = request.provider.lower().strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty.",
+        )
+
+    started_at = time.perf_counter()
+
+    usage = {
+        "model": GEMINI_MODEL if provider == "gemini" else OLLAMA_MODEL,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+
+    logged = False
+
+    def capture_usage(data):
+        usage.update(data)
+
+    def save_call():
+        nonlocal logged
+
+        if logged:
+            return
+
+        logged = True
+
+        try:
+            latency_ms = int(
+                (time.perf_counter() - started_at) * 1000
+            )
+
+            cost = calculate_cost(
+                provider=provider,
+                model=usage["model"],
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+            )
+
+            call = LLMCall(
+                provider=provider,
+                model=usage["model"],
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                latency_ms=latency_ms,
+                cost_usd=cost,
+            )
+
+            with Session(database.engine) as session:
+                session.add(call)
+                session.commit()
+
+        except Exception:
+            logger.exception("Failed to save LLM call")
+
+    iterator = generate(
+        question,
+        provider,
+        on_usage=capture_usage,
+    )
+
+    try:
+        first_chunk = await anext(iterator)
+
+    except StopAsyncIteration:
+        first_chunk = None
+
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        await run_in_threadpool(save_call)
+        raise HTTPException(
+            status_code=504,
+            detail="LLM request timed out after retries.",
+        ) from exc
+
+    except Exception as exc:
+        logger.exception("LLM generation failed")
+        await run_in_threadpool(save_call)
+        raise HTTPException(
+            status_code=503,
+            detail="LLM provider is currently unavailable.",
+        ) from exc
+
+    async def response_stream() -> AsyncIterator[str]:
+        try:
+            if first_chunk is not None:
+                yield first_chunk
+
+            async for chunk in iterator:
+                yield chunk
+
+        except Exception:
+            logger.exception("LLM stream interrupted")
+            raise
+
+        finally:
+            await run_in_threadpool(save_call)
+
+    return StreamingResponse(
+        response_stream(),
+        media_type="text/plain",
+    )
+
+
+@app.post("/extract", response_model=ResumeData)
+async def extract(request: ExtractRequest):
+    resume_text = request.resume_text.strip()
+
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Resume text cannot be empty.",
+        )
+
+    try:
+        return await extract_resume(resume_text)
+
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Resume extraction timed out.",
+        ) from exc
+
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Resume extraction failed after validation retry.",
+        ) from exc
+
+    except Exception as exc:
+        logger.exception("Resume extraction failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Resume extraction provider is unavailable.",
+        ) from exc
