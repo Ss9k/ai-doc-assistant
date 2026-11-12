@@ -16,9 +16,7 @@ from app.retry import retry
 load_dotenv()
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-OLLAMA_BASE_URL = os.getenv(
-    "OLLAMA_BASE_URL", "http://localhost:11434"
-)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 REQUEST_TIMEOUT = 30
@@ -34,9 +32,7 @@ def should_retry(exc: Exception) -> bool:
         return True
 
     if isinstance(exc, errors.APIError):
-        return exc.code == 429 or (
-            exc.code is not None and 500 <= exc.code <= 599
-        )
+        return exc.code == 429 or (exc.code is not None and 500 <= exc.code <= 599)
 
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code == 429 or (
@@ -114,12 +110,13 @@ async def generate_with_gemini(
         metadata = getattr(chunk, "usage_metadata", None)
 
         if metadata and on_usage:
-            on_usage({
-                "model": getattr(chunk, "model_version", None)
-                or GEMINI_MODEL,
-                "input_tokens": metadata.prompt_token_count or 0,
-                "output_tokens": metadata.candidates_token_count or 0,
-            })
+            on_usage(
+                {
+                    "model": getattr(chunk, "model_version", None) or GEMINI_MODEL,
+                    "input_tokens": metadata.prompt_token_count or 0,
+                    "output_tokens": metadata.candidates_token_count or 0,
+                }
+            )
 
 
 @retry(
@@ -150,9 +147,7 @@ async def generate_with_ollama(
     timeout = httpx.Timeout(REQUEST_TIMEOUT)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream(
-            "POST", url, json=payload
-        ) as response:
+        async with client.stream("POST", url, json=payload) as response:
             response.raise_for_status()
 
             async for line in response.aiter_lines():
@@ -165,15 +160,13 @@ async def generate_with_ollama(
                     yield data["response"]
 
                 if data.get("done") and on_usage:
-                    on_usage({
-                        "model": data.get("model", OLLAMA_MODEL),
-                        "input_tokens": data.get(
-                            "prompt_eval_count", 0
-                        ),
-                        "output_tokens": data.get(
-                            "eval_count", 0
-                        ),
-                    })
+                    on_usage(
+                        {
+                            "model": data.get("model", OLLAMA_MODEL),
+                            "input_tokens": data.get("prompt_eval_count", 0),
+                            "output_tokens": data.get("eval_count", 0),
+                        }
+                    )
 
 
 RESUME_EXTRACTION_PROMPT = """

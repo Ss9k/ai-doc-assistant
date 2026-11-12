@@ -26,17 +26,13 @@ async def test_gemini_streams_text_chunks():
     mock_stream = mock_async_stream([chunk1, chunk2])
 
     mock_client = MagicMock()
-    mock_client.aio.models.generate_content_stream = AsyncMock(
-        return_value=mock_stream
-    )
+    mock_client.aio.models.generate_content_stream = AsyncMock(return_value=mock_stream)
 
     with (
         patch("app.llm.genai.Client", return_value=mock_client),
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-api-key"}),
     ):
-        result = [
-            chunk async for chunk in generate_with_gemini("Say hello")
-        ]
+        result = [chunk async for chunk in generate_with_gemini("Say hello")]
 
     assert result == ["Hello ", "World!"]
 
