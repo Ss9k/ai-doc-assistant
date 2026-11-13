@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
@@ -28,8 +28,124 @@ from app.llm import (
 from app.models import Document, DocumentResponse, LLMCall, ResumeData
 from app.pricing import calculate_cost
 
-app = FastAPI(title="AI Document Assistant")
+from app.llm import generate_embedding
+from app.models import Chunk
+from app.ingestion import chunk_text, extract_pdf_pages
 
+app = FastAPI(title="AI Document Assistant")
+logger = logging.getLogger(__name__)
+
+
+def process_document(document_id: str) -> None:
+    with Session(database.engine) as session:
+        document = session.get(Document, document_id)
+
+        if document is None:
+            logger.error(
+                "Document not found for background processing: %s",
+                document_id,
+            )
+            return
+
+        try:
+            # 1. Mark document as processing.
+            document.status = "processing"
+            session.add(document)
+            session.commit()
+
+            logger.info(
+                "Started processing document: %s",
+                document.filename,
+            )
+
+            # 2. Validate stored file.
+            if not document.storage_path:
+                raise ValueError("Document storage path is missing.")
+
+            pdf_path = Path(document.storage_path)
+
+            if not pdf_path.is_file():
+                raise FileNotFoundError(
+                    f"Uploaded file not found: {pdf_path}"
+                )
+
+            if pdf_path.suffix.lower() != ".pdf":
+                raise ValueError(
+                    "Background ingestion currently supports PDF files only."
+                )
+
+            # 3. Extract text page by page.
+            pages = extract_pdf_pages(str(pdf_path))
+
+            if not pages:
+                raise ValueError(
+                    "PDF contains no extractable text."
+                )
+
+            # 4. Generate chunks and embeddings.
+            chunks_to_save = []
+
+            for page_number, page_text in pages:
+                text_chunks = chunk_text(
+                    page_text,
+                    chunk_size=800,
+                    overlap=100,
+                )
+
+                for text in text_chunks:
+                    embedding = generate_embedding(text)
+
+                    chunks_to_save.append(
+                        Chunk(
+                            document_id=document.id,
+                            text=text,
+                            filename=document.filename,
+                            page_number=page_number,
+                            embedding=embedding,
+                        )
+                    )
+
+            if not chunks_to_save:
+                raise ValueError("No chunks were generated.")
+
+            # 5. Save all chunks in one transaction.
+            session.add_all(chunks_to_save)
+            session.flush()
+
+            # 6. Mark ready only after successful storage.
+            document.status = "ready"
+            session.add(document)
+            session.commit()
+
+            logger.info(
+                "Successfully processed document %s: %d chunks saved.",
+                document.filename,
+                len(chunks_to_save),
+            )
+
+        except Exception:
+            # Roll back any partially inserted chunks.
+            session.rollback()
+
+            try:
+                document = session.get(Document, document_id)
+
+                if document is not None:
+                    document.status = "failed"
+                    session.add(document)
+                    session.commit()
+
+            except Exception:
+                session.rollback()
+                logger.exception(
+                    "Failed to update document status to failed: %s",
+                    document_id,
+                )
+
+            logger.exception(
+                "Background processing failed for document ID: %s",
+                document_id,
+            )
 
 class ResumeExtractRequest(BaseModel):
     resume_text: str
@@ -51,6 +167,7 @@ def health_check():
     status_code=201,
 )
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ):
@@ -127,6 +244,8 @@ async def upload_document(
         session.commit()
         session.refresh(document)
 
+        background_tasks.add_task(process_document, document.id)
+        
         return document
 
     except Exception:
@@ -144,14 +263,13 @@ async def upload_document(
             detail="Failed to save the uploaded document.",
         )
 
+    
+
 
 @app.get("/documents", response_model=list[DocumentResponse])
 def list_documents(session: Session = Depends(get_session)):
     statement = select(Document).order_by(Document.uploaded_at.desc())
     return session.exec(statement).all()
-
-
-logger = logging.getLogger(__name__)
 
 
 class AskRequest(BaseModel):

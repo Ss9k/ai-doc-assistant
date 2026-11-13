@@ -17,6 +17,13 @@ load_dotenv()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+OLLAMA_EMBEDDING_MODEL = os.getenv(
+    "OLLAMA_EMBEDDING_MODEL",
+    "nomic-embed-text",
+)
+
+EMBEDDING_DIMENSIONS = 768
+EMBEDDING_TIMEOUT = 60
 
 REQUEST_TIMEOUT = 30
 
@@ -259,3 +266,34 @@ async def extract_resume(resume_text: str) -> ResumeData:
             previous_error = str(exc)
 
     raise RuntimeError("Resume extraction failed unexpectedly.")
+
+def generate_embedding(text: str) -> list[float]:
+    if not text.strip():
+        raise ValueError("Cannot generate embedding for empty text.")
+
+    url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/embed"
+
+    payload = {
+        "model": OLLAMA_EMBEDDING_MODEL,
+        "input": text,
+    }
+
+    with httpx.Client(timeout=EMBEDDING_TIMEOUT) as client:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+
+    data = response.json()
+    embeddings = data.get("embeddings")
+
+    if not embeddings or not embeddings[0]:
+        raise ValueError("Ollama returned an empty embedding.")
+
+    embedding = embeddings[0]
+
+    if len(embedding) != EMBEDDING_DIMENSIONS:
+        raise ValueError(
+            f"Expected {EMBEDDING_DIMENSIONS} dimensions, "
+            f"got {len(embedding)}."
+        )
+
+    return embedding

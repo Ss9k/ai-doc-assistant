@@ -23,6 +23,7 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL_DOCKER}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
     volumes:
       - uploads_data:/app/uploads
     ports:

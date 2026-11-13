@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.28.1",
     "pgvector>=0.5.1",
     "psycopg[binary]>=3.3.6",
+    "pymupdf>=2.1",
     "pypdf>=6.21.3",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
