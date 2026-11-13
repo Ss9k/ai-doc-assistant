@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from uuid import uuid4
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -35,6 +37,7 @@ class ResumeExtractRequest(BaseModel):
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 
 
 @app.get("/health")
@@ -77,7 +80,10 @@ async def upload_document(
     if extension == ".pdf":
         try:
             pdf = PdfReader(BytesIO(content))
-            has_text = any((page.extract_text() or "").strip() for page in pdf.pages)
+            has_text = any(
+                (page.extract_text() or "").strip()
+                for page in pdf.pages
+            )
         except (PdfReadError, EOFError):
             raise HTTPException(
                 status_code=400,
@@ -89,6 +95,7 @@ async def upload_document(
                 status_code=400,
                 detail="The uploaded PDF contains no extractable text.",
             )
+
     existing_document = session.exec(
         select(Document).where(Document.filename == filename)
     ).first()
@@ -99,18 +106,43 @@ async def upload_document(
             detail="A document with this filename already exists.",
         )
 
-    document = Document(
-        filename=filename,
-        content_type=file.content_type or "application/octet-stream",
-        size_bytes=len(content),
-        uploaded_at=datetime.now(UTC),
-    )
+    # Generate a unique filename to prevent collisions.
+    stored_filename = f"{uuid4().hex}{extension}"
 
-    session.add(document)
-    session.commit()
-    session.refresh(document)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    storage_path = UPLOAD_DIR / stored_filename
 
-    return document
+    try:
+        await run_in_threadpool(storage_path.write_bytes, content)
+
+        document = Document(
+            filename=filename,
+            content_type=file.content_type or "application/octet-stream",
+            size_bytes=len(content),
+            storage_path=str(storage_path),
+            uploaded_at=datetime.now(UTC),
+        )
+
+        session.add(document)
+        session.commit()
+        session.refresh(document)
+
+        return document
+
+    except Exception:
+        session.rollback()
+
+        if storage_path.exists():
+            try:
+                storage_path.unlink()
+            except OSError:
+                logger.exception("Failed to remove uploaded file: %s", storage_path)
+
+        logger.exception("Failed to save uploaded document")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save the uploaded document.",
+        )
 
 
 @app.get("/documents", response_model=list[DocumentResponse])
