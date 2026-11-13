@@ -52,7 +52,7 @@ class LLMCall(SQLModel, table=True):
     latency_ms: int = Field(ge=0)
 
     cost_usd: Decimal = Field(
-        default=Decimal("0"),
+        default=Decimal(0),
         sa_column=Column(
             Numeric(12, 8),
             nullable=False,
@@ -62,3 +62,10 @@ class LLMCall(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
     )
+
+
+class ResumeData(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    skills: list[str] = PydanticField(default_factory=list)

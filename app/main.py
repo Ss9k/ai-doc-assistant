@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
@@ -19,16 +18,20 @@ from starlette.concurrency import run_in_threadpool
 from app import database
 from app.database import get_session
 from app.llm import (
-    generate,
-    extract_resume,
     GEMINI_MODEL,
     OLLAMA_MODEL,
+    extract_resume,
+    generate,
 )
 from app.models import Document, DocumentResponse, LLMCall, ResumeData
 from app.pricing import calculate_cost
 
-
 app = FastAPI(title="AI Document Assistant")
+
+
+class ResumeExtractRequest(BaseModel):
+    resume_text: str
+
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
@@ -122,10 +125,6 @@ logger = logging.getLogger(__name__)
 class AskRequest(BaseModel):
     question: str
     provider: Literal["gemini", "ollama"] = "gemini"
-
-
-class ExtractRequest(BaseModel):
-    resume_text: str
 
 
 @app.post("/ask")
@@ -235,33 +234,37 @@ async def ask(request: AskRequest):
 
 
 @app.post("/extract", response_model=ResumeData)
-async def extract(request: ExtractRequest):
-    resume_text = request.resume_text.strip()
-
-    if not resume_text:
+async def extract_resume_endpoint(request: ResumeExtractRequest):
+    if not request.resume_text.strip():
         raise HTTPException(
-            status_code=400,
+            status_code=422,
             detail="Resume text cannot be empty.",
         )
 
     try:
-        return await extract_resume(resume_text)
+        return await extract_resume(request.resume_text)
 
-    except (TimeoutError, asyncio.TimeoutError) as exc:
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract valid resume data after two attempts.",
+        ) from exc
+
+    except TimeoutError as exc:
         raise HTTPException(
             status_code=504,
             detail="Resume extraction timed out.",
         ) from exc
 
-    except ValidationError as exc:
+    except ValueError as exc:
         raise HTTPException(
-            status_code=422,
-            detail="Resume extraction failed after validation retry.",
+            status_code=503,
+            detail="Resume extraction service is not configured correctly.",
         ) from exc
 
     except Exception as exc:
-        logger.exception("Resume extraction failed")
+        logging.getLogger(__name__).exception("Resume extraction failed")
         raise HTTPException(
             status_code=503,
-            detail="Resume extraction provider is unavailable.",
+            detail="Resume extraction service is currently unavailable.",
         ) from exc

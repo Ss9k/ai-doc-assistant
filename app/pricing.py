@@ -18,12 +18,12 @@ PRICING = {
     },
     "ollama": {
         "qwen3:8b": {
-            "input": Decimal("0"),
-            "output": Decimal("0"),
+            "input": Decimal(0),
+            "output": Decimal(0),
         },
         "llama3.2": {
-            "input": Decimal("0"),
-            "output": Decimal("0"),
+            "input": Decimal(0),
+            "output": Decimal(0),
         },
     },
 }
@@ -45,7 +45,7 @@ def calculate_cost(
 
     rates = PRICING.get(provider_key, {}).get(model, default_rates)
 
-    million = Decimal("1000000")
+    million = Decimal(1000000)
 
     cost = (
         Decimal(input_tokens) * rates["input"]
