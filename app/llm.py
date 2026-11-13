@@ -108,14 +108,14 @@ async def generate_with_gemini(
 
         metadata = getattr(chunk, "usage_metadata", None)
 
-            if metadata and on_usage:
-                on_usage(
-                    {
-                        "model": getattr(chunk, "model_version", None) or GEMINI_MODEL,
-                        "input_tokens": metadata.prompt_token_count or 0,
-                        "output_tokens": metadata.candidates_token_count or 0,
-                    }
-                )
+        if metadata and on_usage:
+            on_usage(
+                {
+                    "model": getattr(chunk, "model_version", None) or GEMINI_MODEL,
+                    "input_tokens": metadata.prompt_token_count or 0,
+                    "output_tokens": metadata.candidates_token_count or 0,
+                }
+            )
 
 
 @retry(
