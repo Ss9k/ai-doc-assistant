@@ -1,6 +1,7 @@
 import os
 from logging.config import fileConfig
 
+import app.models  # noqa: F401
 from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, pool
