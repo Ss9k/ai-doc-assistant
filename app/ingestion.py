@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pymupdf
+from docx import Document as WordDocument
 
 
 def extract_pdf_pages(pdf_path: str) -> list[tuple[int, str]]:
@@ -10,11 +11,34 @@ def extract_pdf_pages(pdf_path: str) -> list[tuple[int, str]]:
     with pymupdf.open(pdf_path) as pdf:
         for page_number, page in enumerate(pdf, start=1):
             text = page.get_text("text").strip()
-
             if text:
                 pages.append((page_number, text))
 
     return pages
+
+
+def extract_document_pages(file_path: str) -> list[tuple[int, str]]:
+    """Extract text from supported PDF, TXT, and DOCX files."""
+    path = Path(file_path)
+    extension = path.suffix.lower()
+
+    if extension == ".pdf":
+        return extract_pdf_pages(str(path))
+
+    if extension == ".txt":
+        text = path.read_text(encoding="utf-8-sig").strip()
+        return [(1, text)] if text else []
+
+    if extension == ".docx":
+        document = WordDocument(str(path))
+        text = "\n".join(
+            paragraph.text.strip()
+            for paragraph in document.paragraphs
+            if paragraph.text.strip()
+        )
+        return [(1, text)] if text else []
+
+    raise ValueError(f"Unsupported document type: {extension}")
 
 
 def chunk_text(

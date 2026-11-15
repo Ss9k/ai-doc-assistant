@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field as PydanticField
 from pgvector.sqlalchemy import Vector
+from pydantic import BaseModel
+from pydantic import Field as PydanticField
 from sqlalchemy import Column, Numeric
 from sqlmodel import Field, SQLModel
 

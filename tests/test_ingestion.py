@@ -1,4 +1,3 @@
-
 import pymupdf
 
 from app.ingestion import chunk_text, extract_pdf_pages

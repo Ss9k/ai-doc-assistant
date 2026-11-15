@@ -1,36 +1,33 @@
-import asyncio
 import logging
 import os
-from uuid import uuid4
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
+from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from sqlmodel import Session, select
-from typing import Literal
+from sqlmodel import Session, delete, select
 from starlette.concurrency import run_in_threadpool
 
 from app import database
 from app.database import get_session
+from app.ingestion import chunk_text, extract_document_pages
 from app.llm import (
     GEMINI_MODEL,
     OLLAMA_MODEL,
     extract_resume,
     generate,
+    generate_embedding,
 )
-from app.models import Document, DocumentResponse, LLMCall, ResumeData
+from app.models import Chunk, Document, DocumentResponse, LLMCall, ResumeData
 from app.pricing import calculate_cost
-
-from app.llm import generate_embedding
-from app.models import Chunk
-from app.ingestion import chunk_text, extract_pdf_pages
 
 app = FastAPI(title="AI Document Assistant")
 logger = logging.getLogger(__name__)
@@ -48,57 +45,43 @@ def process_document(document_id: str) -> None:
             return
 
         try:
-            # 1. Mark document as processing.
             document.status = "processing"
             session.add(document)
             session.commit()
 
-            logger.info(
-                "Started processing document: %s",
-                document.filename,
-            )
+            logger.info("Started processing document: %s", document.filename)
 
-            # 2. Validate stored file.
             if not document.storage_path:
                 raise ValueError("Document storage path is missing.")
 
-            pdf_path = Path(document.storage_path)
+            file_path = Path(document.storage_path)
 
-            if not pdf_path.is_file():
-                raise FileNotFoundError(
-                    f"Uploaded file not found: {pdf_path}"
-                )
+            if not file_path.is_file():
+                raise FileNotFoundError(f"Uploaded file not found: {file_path}")
 
-            if pdf_path.suffix.lower() != ".pdf":
-                raise ValueError(
-                    "Background ingestion currently supports PDF files only."
-                )
-
-            # 3. Extract text page by page.
-            pages = extract_pdf_pages(str(pdf_path))
+            # Extract PDF, TXT, or DOCX content.
+            pages = extract_document_pages(str(file_path))
 
             if not pages:
-                raise ValueError(
-                    "PDF contains no extractable text."
-                )
+                raise ValueError("Document contains no extractable text.")
 
-            # 4. Generate chunks and embeddings.
+            # Remove previous chunks before reprocessing.
+            session.exec(delete(Chunk).where(Chunk.document_id == document.id))
+
             chunks_to_save = []
 
             for page_number, page_text in pages:
-                text_chunks = chunk_text(
+                for chunk in chunk_text(
                     page_text,
                     chunk_size=800,
                     overlap=100,
-                )
-
-                for text in text_chunks:
-                    embedding = generate_embedding(text)
+                ):
+                    embedding = generate_embedding(chunk)
 
                     chunks_to_save.append(
                         Chunk(
                             document_id=document.id,
-                            text=text,
+                            text=chunk,
                             filename=document.filename,
                             page_number=page_number,
                             embedding=embedding,
@@ -108,11 +91,9 @@ def process_document(document_id: str) -> None:
             if not chunks_to_save:
                 raise ValueError("No chunks were generated.")
 
-            # 5. Save all chunks in one transaction.
             session.add_all(chunks_to_save)
             session.flush()
 
-            # 6. Mark ready only after successful storage.
             document.status = "ready"
             session.add(document)
             session.commit()
@@ -124,7 +105,6 @@ def process_document(document_id: str) -> None:
             )
 
         except Exception:
-            # Roll back any partially inserted chunks.
             session.rollback()
 
             try:
@@ -146,6 +126,7 @@ def process_document(document_id: str) -> None:
                 "Background processing failed for document ID: %s",
                 document_id,
             )
+
 
 class ResumeExtractRequest(BaseModel):
     resume_text: str
@@ -197,10 +178,7 @@ async def upload_document(
     if extension == ".pdf":
         try:
             pdf = PdfReader(BytesIO(content))
-            has_text = any(
-                (page.extract_text() or "").strip()
-                for page in pdf.pages
-            )
+            has_text = any((page.extract_text() or "").strip() for page in pdf.pages)
         except (PdfReadError, EOFError):
             raise HTTPException(
                 status_code=400,
@@ -245,7 +223,7 @@ async def upload_document(
         session.refresh(document)
 
         background_tasks.add_task(process_document, document.id)
-        
+
         return document
 
     except Exception:
@@ -262,8 +240,6 @@ async def upload_document(
             status_code=500,
             detail="Failed to save the uploaded document.",
         )
-
-    
 
 
 @app.get("/documents", response_model=list[DocumentResponse])
@@ -347,7 +323,7 @@ async def ask(request: AskRequest):
     except StopAsyncIteration:
         first_chunk = None
 
-    except (TimeoutError, asyncio.TimeoutError) as exc:
+    except TimeoutError as exc:
         await run_in_threadpool(save_call)
         raise HTTPException(
             status_code=504,

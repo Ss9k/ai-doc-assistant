@@ -267,6 +267,7 @@ async def extract_resume(resume_text: str) -> ResumeData:
 
     raise RuntimeError("Resume extraction failed unexpectedly.")
 
+
 def generate_embedding(text: str) -> list[float]:
     if not text.strip():
         raise ValueError("Cannot generate embedding for empty text.")
@@ -292,8 +293,7 @@ def generate_embedding(text: str) -> list[float]:
 
     if len(embedding) != EMBEDDING_DIMENSIONS:
         raise ValueError(
-            f"Expected {EMBEDDING_DIMENSIONS} dimensions, "
-            f"got {len(embedding)}."
+            f"Expected {EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}."
         )
 
     return embedding
