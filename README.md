@@ -187,3 +187,34 @@ Apply pending migrations:
 ```bash
 uv run python -m alembic upgrade head
 ```
+
+
+## Search Evaluation
+
+Implemented semantic document search using Ollama `nomic-embed-text`
+embeddings and PostgreSQL pgvector cosine distance (`<=>`).
+
+### Evaluation Results
+
+Tested five questions against the known pages of
+`ai_doc_assistant_test.pdf`.
+
+| # | Question | Expected Page | Found in Top 5 |
+|---|---|---:|---|
+| 1 | What is an AI document assistant and what problem does it solve? | 1 | Yes |
+| 2 | Why is chunk overlap used during document processing? | 1 | Yes |
+| 3 | What are the different document processing statuses? | 1 | Yes |
+| 4 | Why is background processing useful for an upload API? | 3 | Yes |
+| 5 | Why are database transactions important when saving chunks? | 3 | Yes |
+
+**Evaluation Result: 5/5 found in top 5 (100%).**
+
+### Search API
+
+- Endpoint: `GET /search?q=<question>&k=5`
+- Generates question embeddings using the same model as ingestion.
+- Searches only chunks belonging to ready documents.
+- Uses cosine distance (`<=>`) and returns closest matches first.
+- Each result includes text, filename, page number, and cosine distance score.
+- Returns an empty list when no documents are ready.
+- Rejects empty queries with HTTP 422.
