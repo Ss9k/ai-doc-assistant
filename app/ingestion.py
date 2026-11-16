@@ -46,7 +46,7 @@ def chunk_text(
     chunk_size: int = 800,
     overlap: int = 100,
 ) -> list[str]:
-    """Split text into overlapping chunks."""
+    """Split text into overlapping chunks using natural text boundaries."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive.")
 
@@ -63,12 +63,34 @@ def chunk_text(
 
     while start < len(text):
         end = min(start + chunk_size, len(text))
+
+        if end < len(text):
+            # Look for a natural boundary within the last 150 characters.
+            search_start = max(start + 1, end - 150)
+
+            boundaries = [
+                (text.rfind("\n\n", search_start, end), 2),
+                (text.rfind("\n", search_start, end), 1),
+                (text.rfind(".", search_start, end), 1),
+                (text.rfind(" ", search_start, end), 1),
+            ]
+
+            # Select the boundary closest to the proposed chunk end.
+            valid_boundaries = [
+                position + length
+                for position, length in boundaries
+                if position >= search_start
+            ]
+
+            if valid_boundaries:
+                end = max(valid_boundaries)
+
         chunk = text[start:end].strip()
 
         if chunk:
             chunks.append(chunk)
 
-        if end == len(text):
+        if end >= len(text):
             break
 
         start = end - overlap
