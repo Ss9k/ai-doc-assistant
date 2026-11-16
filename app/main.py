@@ -1,32 +1,131 @@
-import asyncio
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from sqlmodel import Session, select
-from typing import Literal
+from sqlmodel import Session, delete, select
 from starlette.concurrency import run_in_threadpool
 
 from app import database
 from app.database import get_session
+from app.ingestion import chunk_text, extract_document_pages
 from app.llm import (
     GEMINI_MODEL,
     OLLAMA_MODEL,
     extract_resume,
     generate,
+    generate_embedding,
 )
-from app.models import Document, DocumentResponse, LLMCall, ResumeData
+from app.models import Chunk, Document, DocumentResponse, LLMCall, ResumeData
 from app.pricing import calculate_cost
 
 app = FastAPI(title="AI Document Assistant")
+logger = logging.getLogger(__name__)
+
+
+def process_document(document_id: str) -> None:
+    with Session(database.engine) as session:
+        document = session.get(Document, document_id)
+
+        if document is None:
+            logger.error(
+                "Document not found for background processing: %s",
+                document_id,
+            )
+            return
+
+        try:
+            document.status = "processing"
+            session.add(document)
+            session.commit()
+
+            logger.info("Started processing document: %s", document.filename)
+
+            if not document.storage_path:
+                raise ValueError("Document storage path is missing.")
+
+            file_path = Path(document.storage_path)
+
+            if not file_path.is_file():
+                raise FileNotFoundError(f"Uploaded file not found: {file_path}")
+
+            # Extract PDF, TXT, or DOCX content.
+            pages = extract_document_pages(str(file_path))
+
+            if not pages:
+                raise ValueError("Document contains no extractable text.")
+
+            # Remove previous chunks before reprocessing.
+            session.exec(delete(Chunk).where(Chunk.document_id == document.id))
+
+            chunks_to_save = []
+
+            for page_number, page_text in pages:
+                for chunk in chunk_text(
+                    page_text,
+                    chunk_size=800,
+                    overlap=100,
+                ):
+                    embedding = generate_embedding(chunk)
+
+                    chunks_to_save.append(
+                        Chunk(
+                            document_id=document.id,
+                            text=chunk,
+                            filename=document.filename,
+                            page_number=page_number,
+                            embedding=embedding,
+                        )
+                    )
+
+            if not chunks_to_save:
+                raise ValueError("No chunks were generated.")
+
+            session.add_all(chunks_to_save)
+            session.flush()
+
+            document.status = "ready"
+            session.add(document)
+            session.commit()
+
+            logger.info(
+                "Successfully processed document %s: %d chunks saved.",
+                document.filename,
+                len(chunks_to_save),
+            )
+
+        except Exception:
+            session.rollback()
+
+            try:
+                document = session.get(Document, document_id)
+
+                if document is not None:
+                    document.status = "failed"
+                    session.add(document)
+                    session.commit()
+
+            except Exception:
+                session.rollback()
+                logger.exception(
+                    "Failed to update document status to failed: %s",
+                    document_id,
+                )
+
+            logger.exception(
+                "Background processing failed for document ID: %s",
+                document_id,
+            )
 
 
 class ResumeExtractRequest(BaseModel):
@@ -35,6 +134,7 @@ class ResumeExtractRequest(BaseModel):
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 
 
 @app.get("/health")
@@ -48,6 +148,7 @@ def health_check():
     status_code=201,
 )
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ):
@@ -89,6 +190,7 @@ async def upload_document(
                 status_code=400,
                 detail="The uploaded PDF contains no extractable text.",
             )
+
     existing_document = session.exec(
         select(Document).where(Document.filename == filename)
     ).first()
@@ -99,27 +201,51 @@ async def upload_document(
             detail="A document with this filename already exists.",
         )
 
-    document = Document(
-        filename=filename,
-        content_type=file.content_type or "application/octet-stream",
-        size_bytes=len(content),
-        uploaded_at=datetime.now(UTC),
-    )
+    # Generate a unique filename to prevent collisions.
+    stored_filename = f"{uuid4().hex}{extension}"
 
-    session.add(document)
-    session.commit()
-    session.refresh(document)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    storage_path = UPLOAD_DIR / stored_filename
 
-    return document
+    try:
+        await run_in_threadpool(storage_path.write_bytes, content)
+
+        document = Document(
+            filename=filename,
+            content_type=file.content_type or "application/octet-stream",
+            size_bytes=len(content),
+            storage_path=str(storage_path),
+            uploaded_at=datetime.now(UTC),
+        )
+
+        session.add(document)
+        session.commit()
+        session.refresh(document)
+
+        background_tasks.add_task(process_document, document.id)
+
+        return document
+
+    except Exception:
+        session.rollback()
+
+        if storage_path.exists():
+            try:
+                storage_path.unlink()
+            except OSError:
+                logger.exception("Failed to remove uploaded file: %s", storage_path)
+
+        logger.exception("Failed to save uploaded document")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save the uploaded document.",
+        )
 
 
 @app.get("/documents", response_model=list[DocumentResponse])
 def list_documents(session: Session = Depends(get_session)):
     statement = select(Document).order_by(Document.uploaded_at.desc())
     return session.exec(statement).all()
-
-
-logger = logging.getLogger(__name__)
 
 
 class AskRequest(BaseModel):
@@ -197,7 +323,7 @@ async def ask(request: AskRequest):
     except StopAsyncIteration:
         first_chunk = None
 
-    except (TimeoutError, asyncio.TimeoutError) as exc:
+    except TimeoutError as exc:
         await run_in_threadpool(save_call)
         raise HTTPException(
             status_code=504,
