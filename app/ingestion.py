@@ -1,3 +1,5 @@
+import re
+
 from pathlib import Path
 
 import pymupdf
@@ -41,12 +43,14 @@ def extract_document_pages(file_path: str) -> list[tuple[int, str]]:
     raise ValueError(f"Unsupported document type: {extension}")
 
 
+
+
 def chunk_text(
     text: str,
     chunk_size: int = 800,
     overlap: int = 100,
 ) -> list[str]:
-    """Split text into overlapping chunks."""
+    """Split text into overlapping chunks without breaking normal words."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive.")
 
@@ -62,7 +66,20 @@ def chunk_text(
     start = 0
 
     while start < len(text):
-        end = min(start + chunk_size, len(text))
+        max_end = min(start + chunk_size, len(text))
+
+        if max_end == len(text):
+            end = max_end
+        else:
+            # Prefer the last whitespace boundary within chunk_size.
+            boundaries = list(re.finditer(r"\s+", text[start:max_end]))
+
+            if boundaries:
+                end = start + boundaries[-1].start()
+            else:
+                # Handle a token longer than chunk_size.
+                end = max_end
+
         chunk = text[start:end].strip()
 
         if chunk:
@@ -71,6 +88,20 @@ def chunk_text(
         if end == len(text):
             break
 
-        start = end - overlap
+        # Calculate the next starting position with overlap.
+        candidate = max(start + 1, end - overlap)
+
+        # Align to a word boundary when possible.
+        previous_boundaries = list(
+            re.finditer(r"\s+", text[start:candidate])
+        )
+
+        if previous_boundaries:
+            next_start = start + previous_boundaries[-1].end()
+        else:
+            # No whitespace: continue splitting an oversized token.
+            next_start = candidate
+
+        start = next_start
 
     return chunks

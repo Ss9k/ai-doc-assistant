@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
+import httpx
 
 from fastapi import (
     BackgroundTasks,
@@ -284,32 +285,61 @@ def search_documents(
 
     if ready_document is None:
         return []
+    
+    try:
+        query_embedding = generate_embedding(question)
 
-    # Use the same embedding model as document ingestion.
-    query_embedding = generate_embedding(question)
+    except httpx.TimeoutException:
+        logger.exception("Embedding generation timed out.")
+        raise HTTPException(
+            status_code=504,
+            detail="Embedding service timed out. Please try again.",
+        )
 
-    # pgvector cosine distance: lower distance means a better match.
+    except httpx.HTTPStatusError:
+        logger.exception("Embedding service returned an HTTP error.")
+        raise HTTPException(
+            status_code=502,
+            detail="Embedding service returned an error.",
+        )
+
+    except httpx.RequestError:
+        logger.exception("Embedding service is unavailable.")
+        raise HTTPException(
+            status_code=503,
+            detail="Embedding service is unavailable. Please try again later.",
+        )
+
+    except ValueError:
+        logger.exception("Embedding service returned an invalid vector.")
+        raise HTTPException(
+            status_code=502,
+            detail="Embedding service returned an invalid embedding.",
+        )
+
+
+        # pgvector cosine distance: lower distance means a better match.
     distance = Chunk.embedding.cosine_distance(query_embedding).label("score")
 
     statement = (
-        select(Chunk, distance)
-        .join(Document, Chunk.document_id == Document.id)
-        .where(Document.status == "ready")
-        .order_by(distance.asc())
-        .limit(k)
-    )
+            select(Chunk, distance)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Document.status == "ready")
+            .order_by(distance.asc())
+            .limit(k)
+        )
 
     rows = session.exec(statement).all()
 
     return [
-        SearchResult(
-            text=chunk.text,
-            filename=chunk.filename,
-            page=chunk.page_number,
-            score=float(score),
-        )
-        for chunk, score in rows
-    ]
+            SearchResult(
+                text=chunk.text,
+                filename=chunk.filename,
+                page=chunk.page_number,
+                score=float(score),
+            )
+            for chunk, score in rows
+        ]
 
 
 class AskRequest(BaseModel):

@@ -46,3 +46,31 @@ def test_extract_pdf_pages(tmp_path):
     assert "This is page one." in pages[0][1]
     assert pages[1][0] == 2
     assert "This is page two." in pages[1][1]
+
+def test_chunk_text_preserves_words():
+    text = "Machine learning is transforming technology " * 50
+
+    chunks = chunk_text(text, chunk_size=50, overlap=10)
+
+    assert chunks
+    assert all(chunk == chunk.strip() for chunk in chunks)
+
+    # Every chunk should start and end at a word boundary.
+    for chunk in chunks:
+        assert not chunk.startswith(" ")
+        assert not chunk.endswith(" ")
+
+
+def test_chunk_text_empty():
+    assert chunk_text("") == []
+    assert chunk_text("   ") == []
+
+
+def test_chunk_text_invalid_parameters():
+    import pytest
+
+    with pytest.raises(ValueError):
+        chunk_text("Hello world", chunk_size=0)
+
+    with pytest.raises(ValueError):
+        chunk_text("Hello world", chunk_size=100, overlap=100)
