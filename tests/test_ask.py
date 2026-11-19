@@ -1,3 +1,4 @@
+
 import pytest
 from sqlmodel import Session, select
 
@@ -35,12 +36,19 @@ def mock_retrieval(monkeypatch, chunks=None):
     )
 
 
-async def successful_generate(prompt, provider, on_usage=None):
-    assert "DOCUMENT SOURCES:" in prompt
+async def successful_generate(
+    prompt,
+    provider,
+    on_usage=None,
+    system_prompt=None,
+):
+    assert "DOCUMENT DATA:" in prompt
+    assert "USER QUESTION:" in prompt
     assert "Python is a high-level programming language." in prompt
-    assert "Filename: python_guide.pdf" in prompt
-    assert "Page: 3" in prompt
     assert "ONLY information explicitly supported" in prompt
+
+    assert system_prompt is not None
+    assert "untrusted document data" in system_prompt
 
     if on_usage:
         on_usage(
@@ -51,20 +59,30 @@ async def successful_generate(prompt, provider, on_usage=None):
             }
         )
 
-    yield "Python is a high-level programming language."
+    yield "Python is a high-level programming language [Source 1]."
 
 
-async def failing_generate(prompt, provider, on_usage=None):
+async def failing_generate(
+    prompt,
+    provider,
+    on_usage=None,
+    system_prompt=None,
+):
     raise RuntimeError("LLM provider failed")
     yield
 
 
-async def timeout_generate(prompt, provider, on_usage=None):
+async def timeout_generate(
+    prompt,
+    provider,
+    on_usage=None,
+    system_prompt=None,
+):
     raise TimeoutError("LLM request timed out")
     yield
 
 
-def test_ask_streams_grounded_response_and_saves_usage(
+def test_ask_returns_grounded_response_and_saves_usage(
     client,
     monkeypatch,
 ):
@@ -88,7 +106,7 @@ def test_ask_streams_grounded_response_and_saves_usage(
     )
 
     assert response.status_code == 200
-    assert "Python is a high-level programming language." in response.text
+    assert "Python is a high-level programming language" in response.text
     assert "Sources:" in response.text
     assert "python_guide.pdf" in response.text
     assert "Page 3" in response.text
@@ -134,7 +152,8 @@ def test_ask_rejects_unsupported_provider(client):
     detail = response.json()["detail"]
 
     assert any(
-        error["loc"] == ["body", "provider"] and error["type"] == "literal_error"
+        error["loc"] == ["body", "provider"]
+        and error["type"] == "literal_error"
         for error in detail
     )
 
@@ -192,8 +211,16 @@ def test_ask_includes_multiple_source_references(
 
     mock_retrieval(monkeypatch, chunks)
 
-    async def generate_with_sources(prompt, provider, on_usage=None):
-        yield "Answer based on the documents."
+    async def generate_with_sources(
+        prompt,
+        provider,
+        on_usage=None,
+        system_prompt=None,
+    ):
+        yield (
+            "Answer based on the documents "
+            "[Source 1] [Source 2] [Source 3]."
+        )
 
     monkeypatch.setattr(
         "app.main.generate",
@@ -234,7 +261,9 @@ def test_ask_returns_503_when_llm_fails(client, monkeypatch):
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == ("LLM provider is currently unavailable.")
+    assert response.json()["detail"] == (
+        "LLM provider is currently unavailable."
+    )
 
 
 def test_ask_returns_504_on_timeout(client, monkeypatch):
@@ -257,7 +286,9 @@ def test_ask_returns_504_on_timeout(client, monkeypatch):
     )
 
     assert response.status_code == 504
-    assert response.json()["detail"] == ("LLM request timed out after retries.")
+    assert response.json()["detail"] == (
+        "LLM request timed out after retries."
+    )
 
 
 def test_ask_does_not_show_sources_when_answer_is_unknown(
@@ -269,7 +300,12 @@ def test_ask_does_not_show_sources_when_answer_is_unknown(
         [(make_chunk(), 0.1)],
     )
 
-    async def generate_unknown(prompt, provider, on_usage=None):
+    async def generate_unknown(
+        prompt,
+        provider,
+        on_usage=None,
+        system_prompt=None,
+    ):
         yield "I don't know."
 
     monkeypatch.setattr(
