@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pymupdf
@@ -47,11 +48,14 @@ def chunk_text(
     overlap: int = 100,
 ) -> list[str]:
     """Split text into overlapping chunks using natural text boundaries."""
+
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive.")
 
     if overlap < 0 or overlap >= chunk_size:
-        raise ValueError("overlap must be non-negative and smaller than chunk_size.")
+        raise ValueError(
+            "overlap must be non-negative and smaller than chunk_size."
+        )
 
     text = text.strip()
 
@@ -65,7 +69,7 @@ def chunk_text(
         end = min(start + chunk_size, len(text))
 
         if end < len(text):
-            # Look for a natural boundary within the last 150 characters.
+            # Search for natural boundaries near the chunk end.
             search_start = max(start + 1, end - 150)
 
             boundaries = [
@@ -75,7 +79,6 @@ def chunk_text(
                 (text.rfind(" ", search_start, end), 1),
             ]
 
-            # Select the boundary closest to the proposed chunk end.
             valid_boundaries = [
                 position + length
                 for position, length in boundaries
@@ -93,6 +96,16 @@ def chunk_text(
         if end >= len(text):
             break
 
-        start = end - overlap
+        # Preserve the requested overlap.
+        next_start = max(start + 1, end - overlap)
+
+        # Align to the next word boundary when possible.
+        match = re.search(r"\s+", text[next_start:])
+
+        if match:
+            next_start += match.end()
+
+        # If there is no whitespace, retain the calculated position.
+        start = next_start
 
     return chunks

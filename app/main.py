@@ -7,8 +7,17 @@ from io import BytesIO
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
+import httpx
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from pypdf import PdfReader
@@ -132,6 +141,13 @@ class ResumeExtractRequest(BaseModel):
     resume_text: str
 
 
+class SearchResult(BaseModel):
+    text: str
+    filename: str
+    page: int
+    score: float
+
+
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
@@ -246,6 +262,84 @@ async def upload_document(
 def list_documents(session: Session = Depends(get_session)):
     statement = select(Document).order_by(Document.uploaded_at.desc())
     return session.exec(statement).all()
+
+
+@app.get("/search", response_model=list[SearchResult])
+def search_documents(
+    q: str = Query(..., min_length=1),
+    k: int = Query(default=5, ge=1, le=50),
+    session: Session = Depends(get_session),
+):
+    question = q.strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=422,
+            detail="Search query cannot be empty.",
+        )
+
+    # Avoid embedding the question when no documents are ready.
+    ready_document = session.exec(
+        select(Document.id).where(Document.status == "ready").limit(1)
+    ).first()
+
+    if ready_document is None:
+        return []
+    
+    try:
+        query_embedding = generate_embedding(question)
+
+    except httpx.TimeoutException:
+        logger.exception("Embedding generation timed out.")
+        raise HTTPException(
+            status_code=504,
+            detail="Embedding service timed out. Please try again.",
+        )
+
+    except httpx.HTTPStatusError:
+        logger.exception("Embedding service returned an HTTP error.")
+        raise HTTPException(
+            status_code=502,
+            detail="Embedding service returned an error.",
+        )
+
+    except httpx.RequestError:
+        logger.exception("Embedding service is unavailable.")
+        raise HTTPException(
+            status_code=503,
+            detail="Embedding service is unavailable. Please try again later.",
+        )
+
+    except ValueError:
+        logger.exception("Embedding service returned an invalid vector.")
+        raise HTTPException(
+            status_code=502,
+            detail="Embedding service returned an invalid embedding.",
+        )
+
+
+        # pgvector cosine distance: lower distance means a better match.
+    distance = Chunk.embedding.cosine_distance(query_embedding).label("score")
+
+    statement = (
+            select(Chunk, distance)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Document.status == "ready")
+            .order_by(distance.asc())
+            .limit(k)
+        )
+
+    rows = session.exec(statement).all()
+
+    return [
+            SearchResult(
+                text=chunk.text,
+                filename=chunk.filename,
+                page=chunk.page_number,
+                score=float(score),
+            )
+            for chunk, score in rows
+        ]
 
 
 class AskRequest(BaseModel):
