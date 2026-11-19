@@ -133,8 +133,10 @@ async def generate_with_gemini(
         model=GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
-        system_instruction=system_prompt,
-    ) if system_prompt else None,
+            system_instruction=system_prompt,
+        )
+        if system_prompt
+        else None,
     )
 
     async for chunk in stream:
@@ -172,7 +174,13 @@ async def generate_with_ollama(
 ) -> AsyncIterator[str]:
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
 
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt,"system": system_prompt or "", "stream": True, "think": False}
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "system": system_prompt or "",
+        "stream": True,
+        "think": False,
+    }
 
     timeout = httpx.Timeout(REQUEST_TIMEOUT)
 

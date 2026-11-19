@@ -1,4 +1,3 @@
-
 import pytest
 from sqlmodel import Session, select
 
@@ -152,8 +151,7 @@ def test_ask_rejects_unsupported_provider(client):
     detail = response.json()["detail"]
 
     assert any(
-        error["loc"] == ["body", "provider"]
-        and error["type"] == "literal_error"
+        error["loc"] == ["body", "provider"] and error["type"] == "literal_error"
         for error in detail
     )
 
@@ -217,10 +215,7 @@ def test_ask_includes_multiple_source_references(
         on_usage=None,
         system_prompt=None,
     ):
-        yield (
-            "Answer based on the documents "
-            "[Source 1] [Source 2] [Source 3]."
-        )
+        yield ("Answer based on the documents [Source 1] [Source 2] [Source 3].")
 
     monkeypatch.setattr(
         "app.main.generate",
@@ -261,9 +256,7 @@ def test_ask_returns_503_when_llm_fails(client, monkeypatch):
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "LLM provider is currently unavailable."
-    )
+    assert response.json()["detail"] == ("LLM provider is currently unavailable.")
 
 
 def test_ask_returns_504_on_timeout(client, monkeypatch):
@@ -286,9 +279,7 @@ def test_ask_returns_504_on_timeout(client, monkeypatch):
     )
 
     assert response.status_code == 504
-    assert response.json()["detail"] == (
-        "LLM request timed out after retries."
-    )
+    assert response.json()["detail"] == ("LLM request timed out after retries.")
 
 
 def test_ask_does_not_show_sources_when_answer_is_unknown(
