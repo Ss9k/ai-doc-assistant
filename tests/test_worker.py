@@ -1,3 +1,4 @@
+import pymupdf
 from sqlmodel import Session, select
 
 from app import database
@@ -12,6 +13,26 @@ def create_text_document(tmp_path):
     document = Document(
         filename="research.txt",
         content_type="text/plain",
+        size_bytes=file_path.stat().st_size,
+        storage_path=str(file_path),
+    )
+
+    with Session(database.engine) as session:
+        session.add(document)
+        session.commit()
+        session.refresh(document)
+        document_id = document.id
+
+    return document_id
+
+
+def create_pdf_document(tmp_path, filename, content):
+    file_path = tmp_path / filename
+    file_path.write_bytes(content)
+
+    document = Document(
+        filename=filename,
+        content_type="application/pdf",
         size_bytes=file_path.stat().st_size,
         storage_path=str(file_path),
     )
@@ -100,3 +121,48 @@ def test_worker_marks_document_failed_when_file_is_missing(client, tmp_path):
     with Session(database.engine) as session:
         document = session.get(Document, document_id)
         assert document.status == "failed"
+
+
+def test_worker_marks_document_failed_on_corrupted_pdf(client, tmp_path):
+    document_id = create_pdf_document(
+        tmp_path,
+        "corrupted.pdf",
+        b"%PDF-1.4 unreadable bytes",
+    )
+
+    process_document(document_id)
+
+    with Session(database.engine) as session:
+        document = session.get(Document, document_id)
+        chunks = session.exec(
+            select(Chunk).where(Chunk.document_id == document_id)
+        ).all()
+
+        assert document.status == "failed"
+        assert len(chunks) == 0
+
+
+def test_worker_marks_document_failed_on_blank_pdf(client, tmp_path):
+    pdf_path = tmp_path / "blank.pdf"
+
+    # Create a valid PDF containing a page with no text.
+    with pymupdf.open() as pdf:
+        pdf.new_page()
+        pdf.save(pdf_path)
+
+    document_id = create_pdf_document(
+        tmp_path,
+        "blank.pdf",
+        pdf_path.read_bytes(),
+    )
+
+    process_document(document_id)
+
+    with Session(database.engine) as session:
+        document = session.get(Document, document_id)
+        chunks = session.exec(
+            select(Chunk).where(Chunk.document_id == document_id)
+        ).all()
+
+        assert document.status == "failed"
+        assert len(chunks) == 0
