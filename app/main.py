@@ -390,8 +390,6 @@ def retrieve_for_ask(question: str) -> list[tuple[Chunk, float]]:
         return retrieve_relevant_chunks(question, session)
 
 
-
-
 def build_rag_prompt(
     question: str,
     retrieved_chunks: list[tuple[Chunk, float]],
@@ -474,7 +472,6 @@ ANSWER:
 """
 
 
-
 @app.post("/ask")
 async def ask(request: AskRequest):
     question = request.question.strip()
@@ -502,11 +499,11 @@ async def ask(request: AskRequest):
 
         for chunk, score in retrieved_chunks:
             print(
-            f"DEBUG: {chunk.filename} | "
-            f"Page {chunk.page_number} | "
-            f"Distance {score:.4f}",
-            flush=True,
-        )
+                f"DEBUG: {chunk.filename} | "
+                f"Page {chunk.page_number} | "
+                f"Distance {score:.4f}",
+                flush=True,
+            )
 
     except httpx.TimeoutException as exc:
         logger.exception("Embedding generation timed out.")
@@ -549,8 +546,7 @@ async def ask(request: AskRequest):
     # DEBUG: Inspect retrieved chunks
     for index, (chunk, score) in enumerate(retrieved_chunks, start=1):
         print(
-            f"\n--- CHUNK {index} | Distance: {score:.4f} ---\n"
-            f"{chunk.text}\n",
+            f"\n--- CHUNK {index} | Distance: {score:.4f} ---\n{chunk.text}\n",
             flush=True,
         )
     prompt = build_rag_prompt(question, retrieved_chunks)
