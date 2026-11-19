@@ -1,5 +1,4 @@
 import re
-
 from pathlib import Path
 
 import pymupdf
@@ -41,8 +40,6 @@ def extract_document_pages(file_path: str) -> list[tuple[int, str]]:
         return [(1, text)] if text else []
 
     raise ValueError(f"Unsupported document type: {extension}")
-
-
 
 
 def chunk_text(
@@ -92,9 +89,7 @@ def chunk_text(
         candidate = max(start + 1, end - overlap)
 
         # Align to a word boundary when possible.
-        previous_boundaries = list(
-            re.finditer(r"\s+", text[start:candidate])
-        )
+        previous_boundaries = list(re.finditer(r"\s+", text[start:candidate]))
 
         if previous_boundaries:
             next_start = start + previous_boundaries[-1].end()
