@@ -1,4 +1,3 @@
-
 import re
 from pathlib import Path
 
@@ -54,9 +53,7 @@ def chunk_text(
         raise ValueError("chunk_size must be positive.")
 
     if overlap < 0 or overlap >= chunk_size:
-        raise ValueError(
-            "overlap must be non-negative and smaller than chunk_size."
-        )
+        raise ValueError("overlap must be non-negative and smaller than chunk_size.")
 
     text = text.strip()
 
