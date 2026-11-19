@@ -1,3 +1,5 @@
+
+import re
 from pathlib import Path
 
 import pymupdf
@@ -46,13 +48,15 @@ def chunk_text(
     chunk_size: int = 800,
     overlap: int = 100,
 ) -> list[str]:
-    """Split text into overlapping chunks at whitespace boundaries."""
+    """Split text into overlapping chunks using natural text boundaries."""
 
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive.")
 
     if overlap < 0 or overlap >= chunk_size:
-        raise ValueError("overlap must be non-negative and smaller than chunk_size.")
+        raise ValueError(
+            "overlap must be non-negative and smaller than chunk_size."
+        )
 
     text = text.strip()
 
@@ -66,11 +70,25 @@ def chunk_text(
         max_end = min(start + chunk_size, len(text))
         end = max_end
 
-        if max_end < len(text):
-            boundary = text.rfind(" ", start, max_end)
+        if end < len(text):
+            # Search for natural boundaries near the chunk end.
+            search_start = max(start + 1, end - 150)
 
-            if boundary > start:
-                end = boundary
+            boundaries = [
+                (text.rfind("\n\n", search_start, end), 2),
+                (text.rfind("\n", search_start, end), 1),
+                (text.rfind(".", search_start, end), 1),
+                (text.rfind(" ", search_start, end), 1),
+            ]
+
+            valid_boundaries = [
+                position + length
+                for position, length in boundaries
+                if position >= search_start
+            ]
+
+            if valid_boundaries:
+                end = max(valid_boundaries)
 
         chunk = text[start:end].strip()
 
@@ -80,17 +98,16 @@ def chunk_text(
         if end >= len(text):
             break
 
+        # Preserve the requested overlap.
         next_start = max(start + 1, end - overlap)
 
-        # Only align to a word boundary if a whitespace
-        # boundary was found in the current chunk.
-        if end < max_end or text.find(" ", start, max_end) != -1:
-            while next_start < len(text) and not text[next_start - 1].isspace():
-                next_start += 1
+        # Align to the next word boundary within the current chunk.
+        match = re.search(r"\s+", text[next_start:end])
 
-            while next_start < len(text) and text[next_start].isspace():
-                next_start += 1
+        if match:
+            next_start += match.end()
 
+        # If no whitespace exists, retain the calculated position.
         start = next_start
 
     return chunks
