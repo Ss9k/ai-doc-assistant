@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 import pymupdf
@@ -47,7 +46,8 @@ def chunk_text(
     chunk_size: int = 800,
     overlap: int = 100,
 ) -> list[str]:
-    """Split text into overlapping chunks without breaking normal words."""
+    """Split text into overlapping chunks at whitespace boundaries."""
+
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive.")
 
@@ -64,38 +64,32 @@ def chunk_text(
 
     while start < len(text):
         max_end = min(start + chunk_size, len(text))
+        end = max_end
 
-        if max_end == len(text):
-            end = max_end
-        else:
-            # Prefer the last whitespace boundary within chunk_size.
-            boundaries = list(re.finditer(r"\s+", text[start:max_end]))
+        if max_end < len(text):
+            boundary = text.rfind(" ", start, max_end)
 
-            if boundaries:
-                end = start + boundaries[-1].start()
-            else:
-                # Handle a token longer than chunk_size.
-                end = max_end
+            if boundary > start:
+                end = boundary
 
         chunk = text[start:end].strip()
 
         if chunk:
             chunks.append(chunk)
 
-        if end == len(text):
+        if end >= len(text):
             break
 
-        # Calculate the next starting position with overlap.
-        candidate = max(start + 1, end - overlap)
+        next_start = max(start + 1, end - overlap)
 
-        # Align to a word boundary when possible.
-        previous_boundaries = list(re.finditer(r"\s+", text[start:candidate]))
+        # Only align to a word boundary if a whitespace
+        # boundary was found in the current chunk.
+        if end < max_end or text.find(" ", start, max_end) != -1:
+            while next_start < len(text) and not text[next_start - 1].isspace():
+                next_start += 1
 
-        if previous_boundaries:
-            next_start = start + previous_boundaries[-1].end()
-        else:
-            # No whitespace: continue splitting an oversized token.
-            next_start = candidate
+            while next_start < len(text) and text[next_start].isspace():
+                next_start += 1
 
         start = next_start
 
