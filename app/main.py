@@ -475,7 +475,6 @@ ANSWER:
 @app.post("/ask")
 async def ask(request: AskRequest):
     question = request.question.strip()
-    print("DEBUG: /ask endpoint reached", flush=True)
     provider = request.provider
 
     if not question:
@@ -483,7 +482,6 @@ async def ask(request: AskRequest):
             status_code=400,
             detail="Question cannot be empty.",
         )
-    print("DEBUG: Starting retrieval", flush=True)
 
     # Retrieve relevant document chunks without blocking the event loop.
     try:
@@ -491,19 +489,6 @@ async def ask(request: AskRequest):
             retrieve_for_ask,
             question,
         )
-        print("DEBUG: Retrieval completed", flush=True)
-        print(
-            f"DEBUG: Retrieved chunks = {len(retrieved_chunks)}",
-            flush=True,
-        )
-
-        for chunk, score in retrieved_chunks:
-            print(
-                f"DEBUG: {chunk.filename} | "
-                f"Page {chunk.page_number} | "
-                f"Distance {score:.4f}",
-                flush=True,
-            )
 
     except httpx.TimeoutException as exc:
         logger.exception("Embedding generation timed out.")
@@ -543,17 +528,7 @@ async def ask(request: AskRequest):
     # Do not call the LLM if there is no relevant document evidence.
     if not retrieved_chunks:
         return PlainTextResponse("I don't know.")
-    # DEBUG: Inspect retrieved chunks
-    for index, (chunk, score) in enumerate(retrieved_chunks, start=1):
-        print(
-            f"\n--- CHUNK {index} | Distance: {score:.4f} ---\n{chunk.text}\n",
-            flush=True,
-        )
     prompt = build_rag_prompt(question, retrieved_chunks)
-    # logger.info("RAG prompt sent to LLM:\n%s", prompt)
-    print("\n===== PROMPT SENT TO LLM =====", flush=True)
-    print(prompt, flush=True)
-    print("===== END PROMPT =====", flush=True)
     # Prepare unique source references.
     sources = []
     seen_sources = set()
