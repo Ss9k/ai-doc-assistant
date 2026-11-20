@@ -1,4 +1,3 @@
-
 from sqlalchemy import literal
 from sqlmodel import Session
 
@@ -56,7 +55,6 @@ def test_search_returns_only_chunks_from_ready_documents(
     # Mock pgvector distance calculation for SQLite.
     vector_type = Chunk.__table__.c.embedding.type
     comparator_class = vector_type.comparator_factory
-
 
     monkeypatch.setattr(
         comparator_class,

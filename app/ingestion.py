@@ -53,9 +53,7 @@ def chunk_text(
         raise ValueError("chunk_size must be positive.")
 
     if overlap < 0 or overlap >= chunk_size:
-        raise ValueError(
-            "overlap must be non-negative and smaller than chunk_size."
-        )
+        raise ValueError("overlap must be non-negative and smaller than chunk_size.")
 
     text = text.strip()
 
@@ -66,7 +64,8 @@ def chunk_text(
     start = 0
 
     while start < len(text):
-        end = min(start + chunk_size, len(text))
+        max_end = min(start + chunk_size, len(text))
+        end = max_end
 
         if end < len(text):
             # Search for natural boundaries near the chunk end.
@@ -99,13 +98,13 @@ def chunk_text(
         # Preserve the requested overlap.
         next_start = max(start + 1, end - overlap)
 
-        # Align to the next word boundary when possible.
-        match = re.search(r"\s+", text[next_start:])
+        # Align to the next word boundary within the current chunk.
+        match = re.search(r"\s+", text[next_start:end])
 
         if match:
             next_start += match.end()
 
-        # If there is no whitespace, retain the calculated position.
+        # If no whitespace exists, retain the calculated position.
         start = next_start
 
     return chunks

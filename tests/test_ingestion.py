@@ -47,6 +47,7 @@ def test_extract_pdf_pages(tmp_path):
     assert pages[1][0] == 2
     assert "This is page two." in pages[1][1]
 
+
 def test_chunk_text_preserves_words():
     text = "Machine learning is transforming technology " * 50
 
