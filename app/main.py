@@ -38,6 +38,7 @@ from app.llm import (
     generate_embedding,
 )
 from app.models import Chunk, Document, DocumentResponse, LLMCall, ResumeData
+from app.observability import langfuse
 from app.pricing import calculate_cost
 
 app = FastAPI(title="AI Document Assistant")
@@ -494,6 +495,33 @@ def validate_citations(
 
 @app.post("/ask")
 async def ask(request: AskRequest):
+    question = request.question.strip()
+
+    with langfuse.start_as_current_observation(
+        as_type="span",
+        name="ask",
+        input={
+            "question": question,
+            "provider": request.provider,
+        },
+    ) as observation:
+        try:
+            response = await _ask(request)
+
+            observation.update(
+                output=response.body.decode("utf-8"),
+            )
+
+            return response
+
+        except HTTPException as exc:
+            observation.update(
+                level="ERROR",
+                status_message=str(exc.detail),
+            )
+            raise
+
+async def _ask(request: AskRequest):
     question = request.question.strip()
     provider = request.provider
 
