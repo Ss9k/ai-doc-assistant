@@ -93,3 +93,24 @@ class LLMCall(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
     )
+
+
+class Feedback(SQLModel, table=True):
+    __tablename__ = "feedback"
+
+    id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True,
+    )
+
+    trace_id: str = Field(
+        index=True,
+        unique=True,
+        nullable=False,
+    )
+
+    rating: str = Field(nullable=False)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+    )

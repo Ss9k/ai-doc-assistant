@@ -20,7 +20,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from sqlmodel import Session, delete, select
@@ -37,7 +37,7 @@ from app.llm import (
     generate,
     generate_embedding,
 )
-from app.models import Chunk, Document, DocumentResponse, LLMCall, ResumeData
+from app.models import Chunk, Document, DocumentResponse, Feedback, LLMCall, ResumeData
 from app.observability import flush_langfuse, langfuse
 from app.pricing import calculate_cost
 
@@ -67,6 +67,11 @@ class SearchResult(BaseModel):
 class AskRequest(BaseModel):
     question: str
     provider: Literal["gemini", "ollama"] = "gemini"
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: str = Field(min_length=1)
+    rating: Literal["thumbs_up", "thumbs_down"]
 
 
 def process_document(document_id: str) -> None:
@@ -508,6 +513,10 @@ async def ask(request: AskRequest):
         ) as observation:
             try:
                 response = await _ask(request, observation)
+                
+                trace_id = langfuse.get_current_trace_id()
+                if trace_id:
+                    response.headers["X-Langfuse-Trace-Id"] = trace_id
 
                 observation.update(
                     output=response.body.decode("utf-8"),
@@ -528,6 +537,53 @@ async def ask(request: AskRequest):
         except Exception:
             logger.exception("Failed to flush Langfuse events")
 
+@app.post("/feedback", status_code=201)
+async def submit_feedback(
+    request: FeedbackRequest,
+    session: Session = Depends(get_session),
+):
+    existing = session.exec(
+        select(Feedback).where(
+            Feedback.trace_id == request.trace_id
+        )
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Feedback already submitted for this trace.",
+        )
+
+    feedback = Feedback(
+        trace_id=request.trace_id,
+        rating=request.rating,
+    )
+
+    session.add(feedback)
+    session.commit()
+    session.refresh(feedback)
+
+    try:
+        await run_in_threadpool(
+            langfuse.create_score,
+            name="user-feedback",
+            value=request.rating,
+            trace_id=request.trace_id,
+            data_type="CATEGORICAL",
+        )
+        await run_in_threadpool(flush_langfuse)
+
+    except Exception:
+        logger.exception(
+            "Feedback saved, but Langfuse score synchronization failed."
+        )
+
+    return {
+        "id": feedback.id,
+        "trace_id": feedback.trace_id,
+        "rating": feedback.rating,
+        "created_at": feedback.created_at,
+    }
 
 async def _ask(request: AskRequest, observation):
     question = request.question.strip()
