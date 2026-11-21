@@ -38,7 +38,7 @@ from app.llm import (
     generate_embedding,
 )
 from app.models import Chunk, Document, DocumentResponse, LLMCall, ResumeData
-from app.observability import langfuse
+from app.observability import flush_langfuse, langfuse
 from app.pricing import calculate_cost
 
 app = FastAPI(title="AI Document Assistant")
@@ -497,31 +497,39 @@ def validate_citations(
 async def ask(request: AskRequest):
     question = request.question.strip()
 
-    with langfuse.start_as_current_observation(
-        as_type="span",
-        name="ask",
-        input={
-            "question": question,
-            "provider": request.provider,
-        },
-    ) as observation:
+    try:
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="ask",
+            input={
+                "question": question,
+                "provider": request.provider,
+            },
+        ) as observation:
+            try:
+                response = await _ask(request, observation)
+
+                observation.update(
+                    output=response.body.decode("utf-8"),
+                )
+
+                return response
+
+            except HTTPException as exc:
+                observation.update(
+                    level="ERROR",
+                    status_message=str(exc.detail),
+                )
+                raise
+
+    finally:
         try:
-            response = await _ask(request)
+            await run_in_threadpool(flush_langfuse)
+        except Exception:
+            logger.exception("Failed to flush Langfuse events")
 
-            observation.update(
-                output=response.body.decode("utf-8"),
-            )
 
-            return response
-
-        except HTTPException as exc:
-            observation.update(
-                level="ERROR",
-                status_message=str(exc.detail),
-            )
-            raise
-
-async def _ask(request: AskRequest):
+async def _ask(request: AskRequest, observation):
     question = request.question.strip()
     provider = request.provider
 
@@ -572,6 +580,27 @@ async def _ask(request: AskRequest):
             status_code=500,
             detail="Document retrieval failed.",
         ) from exc
+
+        # Capture retrieved context and model details in Langfuse.
+    model = GEMINI_MODEL if provider == "gemini" else OLLAMA_MODEL
+
+    retrieved_context = [
+        {
+            "filename": chunk.filename,
+            "page_number": chunk.page_number,
+            "content": chunk.text,
+            "similarity_score": score,
+        }
+        for chunk, score in retrieved_chunks
+    ]
+
+    observation.update(
+        metadata={
+            "provider": provider,
+            "model": model,
+            "retrieved_context": retrieved_context,
+        }
+    )
 
     # No relevant evidence: do not call the LLM.
     if not retrieved_chunks:
@@ -637,32 +666,70 @@ async def _ask(request: AskRequest):
         except Exception:
             logger.exception("Failed to save LLM call")
 
-    # Generate the complete answer before returning anything.
-    iterator = generate(
-        prompt,
-        provider,
-        on_usage=capture_usage,
-        system_prompt=RAG_SYSTEM_PROMPT,
-    )
-
     answer_parts = []
 
     try:
-        async for chunk in iterator:
-            answer_parts.append(chunk)
+        with langfuse.start_as_current_observation(
+            as_type="generation",
+            name="llm-generation",
+            model=usage["model"],
+            input={"prompt": prompt},
+        ) as generation:
+            try:
+                iterator = generate(
+                    prompt,
+                    provider,
+                    on_usage=capture_usage,
+                    system_prompt=RAG_SYSTEM_PROMPT,
+                )
 
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=504,
-            detail="LLM request timed out after retries.",
-        ) from exc
+                async for chunk in iterator:
+                    answer_parts.append(chunk)
 
-    except Exception as exc:
-        logger.exception("LLM generation failed")
-        raise HTTPException(
-            status_code=503,
-            detail="LLM provider is currently unavailable.",
-        ) from exc
+            except TimeoutError as exc:
+                generation.update(
+                    level="ERROR",
+                    status_message="LLM request timed out after retries.",
+                )
+                raise HTTPException(
+                    status_code=504,
+                    detail="LLM request timed out after retries.",
+                ) from exc
+
+            except Exception as exc:
+                logger.exception("LLM generation failed")
+                generation.update(
+                    level="ERROR",
+                    status_message="LLM provider is currently unavailable.",
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="LLM provider is currently unavailable.",
+                ) from exc
+
+            finally:
+                latency_ms = int(
+                    (time.perf_counter() - started_at) * 1000
+                )
+
+                try:
+                    generation.update(
+                        output="".join(answer_parts),
+                        usage_details={
+                            "input_tokens": usage["input_tokens"],
+                            "output_tokens": usage["output_tokens"],
+                            "total": (
+                                usage["input_tokens"] + usage["output_tokens"]
+                            ),
+                        },
+                        metadata={
+                            "llm_latency_ms": latency_ms,
+                        },
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to update Langfuse generation"
+                    )
 
     finally:
         await run_in_threadpool(save_call)
