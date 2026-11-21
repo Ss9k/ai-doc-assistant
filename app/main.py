@@ -513,7 +513,7 @@ async def ask(request: AskRequest):
         ) as observation:
             try:
                 response = await _ask(request, observation)
-                
+
                 trace_id = langfuse.get_current_trace_id()
                 if trace_id:
                     response.headers["X-Langfuse-Trace-Id"] = trace_id
@@ -537,15 +537,14 @@ async def ask(request: AskRequest):
         except Exception:
             logger.exception("Failed to flush Langfuse events")
 
+
 @app.post("/feedback", status_code=201)
 async def submit_feedback(
     request: FeedbackRequest,
     session: Session = Depends(get_session),
 ):
     existing = session.exec(
-        select(Feedback).where(
-            Feedback.trace_id == request.trace_id
-        )
+        select(Feedback).where(Feedback.trace_id == request.trace_id)
     ).first()
 
     if existing:
@@ -574,9 +573,7 @@ async def submit_feedback(
         await run_in_threadpool(flush_langfuse)
 
     except Exception:
-        logger.exception(
-            "Feedback saved, but Langfuse score synchronization failed."
-        )
+        logger.exception("Feedback saved, but Langfuse score synchronization failed.")
 
     return {
         "id": feedback.id,
@@ -584,6 +581,7 @@ async def submit_feedback(
         "rating": feedback.rating,
         "created_at": feedback.created_at,
     }
+
 
 async def _ask(request: AskRequest, observation):
     question = request.question.strip()
@@ -764,9 +762,7 @@ async def _ask(request: AskRequest, observation):
                 ) from exc
 
             finally:
-                latency_ms = int(
-                    (time.perf_counter() - started_at) * 1000
-                )
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
 
                 try:
                     generation.update(
@@ -774,18 +770,14 @@ async def _ask(request: AskRequest, observation):
                         usage_details={
                             "input_tokens": usage["input_tokens"],
                             "output_tokens": usage["output_tokens"],
-                            "total": (
-                                usage["input_tokens"] + usage["output_tokens"]
-                            ),
+                            "total": (usage["input_tokens"] + usage["output_tokens"]),
                         },
                         metadata={
                             "llm_latency_ms": latency_ms,
                         },
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to update Langfuse generation"
-                    )
+                    logger.exception("Failed to update Langfuse generation")
 
     finally:
         await run_in_threadpool(save_call)

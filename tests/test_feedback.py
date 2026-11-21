@@ -1,4 +1,3 @@
-
 from sqlmodel import Session, select
 
 from app import database
@@ -28,9 +27,7 @@ def test_submit_feedback_success(client, monkeypatch):
 
     with Session(database.engine) as session:
         feedback = session.exec(
-            select(Feedback).where(
-                Feedback.trace_id == payload["trace_id"]
-            )
+            select(Feedback).where(Feedback.trace_id == payload["trace_id"])
         ).first()
 
     assert feedback is not None
