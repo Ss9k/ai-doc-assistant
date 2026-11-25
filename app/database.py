@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
 load_dotenv()
 
@@ -20,10 +20,6 @@ if DATABASE_URL.startswith("sqlite"):
         engine_options["poolclass"] = StaticPool
 
 engine = create_engine(DATABASE_URL, **engine_options)
-
-
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
 
 
 def get_session():
